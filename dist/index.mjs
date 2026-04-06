@@ -18765,14 +18765,14 @@ var require_etag = __commonJS({
   "../../node_modules/.pnpm/etag@1.8.1/node_modules/etag/index.js"(exports, module) {
     "use strict";
     module.exports = etag;
-    var crypto = __require("crypto");
+    var crypto2 = __require("crypto");
     var Stats = __require("fs").Stats;
     var toString = Object.prototype.toString;
     function entitytag(entity) {
       if (entity.length === 0) {
         return '"0-2jmj7l5rSw0yVb/vlWAYkK/YBwk"';
       }
-      var hash = crypto.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
+      var hash = crypto2.createHash("sha1").update(entity, "utf8").digest("base64").substring(0, 27);
       var len = typeof entity === "string" ? Buffer.byteLength(entity, "utf8") : entity.length;
       return '"' + len.toString(16) + "-" + hash + '"';
     }
@@ -22187,17 +22187,17 @@ var require_content_disposition = __commonJS({
 // ../../node_modules/.pnpm/cookie-signature@1.2.2/node_modules/cookie-signature/index.js
 var require_cookie_signature = __commonJS({
   "../../node_modules/.pnpm/cookie-signature@1.2.2/node_modules/cookie-signature/index.js"(exports) {
-    var crypto = __require("crypto");
+    var crypto2 = __require("crypto");
     exports.sign = function(val, secret) {
       if ("string" != typeof val) throw new TypeError("Cookie value must be provided as a string.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
-      return val + "." + crypto.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
+      return val + "." + crypto2.createHmac("sha256", secret).update(val).digest("base64").replace(/\=+$/, "");
     };
     exports.unsign = function(input, secret) {
       if ("string" != typeof input) throw new TypeError("Signed cookie string must be provided.");
       if (null == secret) throw new TypeError("Secret key must be provided.");
       var tentativeValue = input.slice(0, input.lastIndexOf(".")), expectedInput = exports.sign(tentativeValue, secret), expectedBuffer = Buffer.from(expectedInput), inputBuffer = Buffer.from(input);
-      return expectedBuffer.length === inputBuffer.length && crypto.timingSafeEqual(expectedBuffer, inputBuffer) ? tentativeValue : false;
+      return expectedBuffer.length === inputBuffer.length && crypto2.timingSafeEqual(expectedBuffer, inputBuffer) ? tentativeValue : false;
     };
   }
 });
@@ -41469,9 +41469,9 @@ var require_disk = __commonJS({
     var fs7 = __require("fs");
     var os2 = __require("os");
     var path7 = __require("path");
-    var crypto = __require("crypto");
+    var crypto2 = __require("crypto");
     function getFilename(req, file, cb) {
-      crypto.randomBytes(16, function(err, raw) {
+      crypto2.randomBytes(16, function(err, raw) {
         cb(err, err ? void 0 : raw.toString("hex"));
       });
     }
@@ -49263,8 +49263,10 @@ var import_express3 = __toESM(require_express2(), 1);
 import fs4 from "fs";
 import path4 from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
+import crypto from "crypto";
 var router3 = (0, import_express3.Router)();
 var ADMIN_KEYS = /* @__PURE__ */ new Set(["IPASTORE-ADMIN", "ADMIN-LIFETIME-KEY"]);
+var ADMIN_PANEL_KEY = "ADMIN-KEYGEN";
 var POSSIBLE_KEYS_PATHS = [
   path4.resolve(import.meta.dirname, "..", "keys.json"),
   path4.resolve(process.cwd(), "keys.json"),
@@ -49272,17 +49274,18 @@ var POSSIBLE_KEYS_PATHS = [
   path4.resolve(fileURLToPath2(import.meta.url), "..", "..", "keys.json")
 ];
 function getKeysFilePath() {
-  for (const p of POSSIBLE_KEYS_PATHS) {
-    if (fs4.existsSync(p)) return p;
+  for (const p2 of POSSIBLE_KEYS_PATHS) {
+    if (fs4.existsSync(p2)) return p2;
   }
-  return null;
+  const p = POSSIBLE_KEYS_PATHS[0];
+  fs4.writeFileSync(p, "[]");
+  return p;
 }
 function loadKeys() {
   const filePath = getKeysFilePath();
   if (!filePath) return [];
   try {
-    const data = fs4.readFileSync(filePath, "utf-8");
-    return JSON.parse(data);
+    return JSON.parse(fs4.readFileSync(filePath, "utf-8"));
   } catch {
     return [];
   }
@@ -49295,6 +49298,10 @@ function saveKeys(keys) {
   } catch {
   }
 }
+function isAdminRequest(req) {
+  const header = req.headers["x-admin-key"];
+  return header?.trim().toUpperCase() === ADMIN_PANEL_KEY;
+}
 router3.post("/keys/validate", (req, res) => {
   const { key } = req.body;
   if (!key || typeof key !== "string") {
@@ -49302,6 +49309,10 @@ router3.post("/keys/validate", (req, res) => {
     return;
   }
   const normalizedKey = key.trim().toUpperCase();
+  if (normalizedKey === ADMIN_PANEL_KEY) {
+    res.json({ valid: true, adminPanel: true, message: "Admin panel access granted." });
+    return;
+  }
   if (ADMIN_KEYS.has(normalizedKey)) {
     res.json({ valid: true, admin: true, message: "Admin access granted. Installing..." });
     return;
@@ -49325,6 +49336,59 @@ router3.post("/keys/validate", (req, res) => {
   entry.usedBy = req.headers["x-forwarded-for"]?.toString() || req.ip || "unknown";
   saveKeys(keys);
   res.json({ valid: true, message: "Key accepted! Installing..." });
+});
+router3.get("/admin/keys", (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const keys = loadKeys();
+  const total = keys.length;
+  const used = keys.filter((k) => k.used).length;
+  res.json({ keys, total, used, available: total - used });
+});
+router3.post("/admin/keys/generate", (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const count = Math.min(Math.max(parseInt(req.body.count ?? "1", 10), 1), 100);
+  const keys = loadKeys();
+  const existingKeys = new Set(keys.map((k) => k.key));
+  const generated = [];
+  while (generated.length < count) {
+    const newKey = crypto.randomBytes(8).toString("hex").toUpperCase();
+    if (!existingKeys.has(newKey)) {
+      existingKeys.add(newKey);
+      generated.push(newKey);
+      keys.push({ key: newKey, used: false, usedAt: null, usedBy: null });
+    }
+  }
+  saveKeys(keys);
+  res.json({ generated, count: generated.length });
+});
+router3.delete("/admin/keys/used", (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const keys = loadKeys();
+  const before = keys.length;
+  const remaining = keys.filter((k) => !k.used);
+  saveKeys(remaining);
+  res.json({ deleted: before - remaining.length, remaining: remaining.length });
+});
+router3.delete("/admin/keys/:key", (req, res) => {
+  if (!isAdminRequest(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const target = req.params.key.toUpperCase();
+  const keys = loadKeys();
+  const before = keys.length;
+  const remaining = keys.filter((k) => k.key !== target);
+  saveKeys(remaining);
+  res.json({ deleted: before - remaining.length });
 });
 var keys_default = router3;
 
