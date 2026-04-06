@@ -49027,7 +49027,13 @@ function zsignPath() {
     path2.resolve(process.cwd(), "bin", "zsign")
   ];
   for (const p of candidates) {
-    if (fs2.existsSync(p)) return p;
+    if (fs2.existsSync(p)) {
+      try {
+        fs2.chmodSync(p, 493);
+      } catch {
+      }
+      return p;
+    }
   }
   return "zsign";
 }
@@ -49310,6 +49316,11 @@ async function loadKeysFromGitHub() {
         "User-Agent": "IPAStore-Server"
       }
     });
+    if (resp.status === 404) {
+      logger.info({ repo: GH_KEYS_REPO }, "keys.json not found on GitHub \u2014 creating it");
+      await saveKeysToGitHub([]);
+      return [];
+    }
     if (!resp.ok) {
       logger.warn({ status: resp.status }, "GitHub keys fetch failed");
       return null;
