@@ -49150,6 +49150,7 @@ var router2 = (0, import_express2.Router)();
 var APP_NAME = process.env.APP_NAME || "IPA Store";
 var BUNDLE_ID = process.env.BUNDLE_ID || "thewonderofyou.IPStore";
 var BUNDLE_VERSION = process.env.BUNDLE_VERSION || "2.6.0";
+var SERVER_URL = process.env.SERVER_URL?.replace(/\/$/, "");
 function getBaseUrl(req) {
   const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
   const host = req.headers["x-forwarded-host"] || req.headers.host || req.hostname;
@@ -49158,7 +49159,7 @@ function getBaseUrl(req) {
 router2.get("/manifest.plist", async (req, res) => {
   const base = getBaseUrl(req);
   const iconUrl = `${base}/api/icon.png`;
-  const ipaUrl = `${base}/api/app.ipa`;
+  const ipaUrl = `${SERVER_URL || base}/api/app.ipa`;
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -49264,6 +49265,26 @@ import fs4 from "fs";
 import path4 from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import crypto from "crypto";
+
+// src/lib/logger.ts
+var import_pino = __toESM(require_pino(), 1);
+var isProduction = process.env.NODE_ENV === "production";
+var logger = (0, import_pino.default)({
+  level: process.env.LOG_LEVEL ?? "info",
+  redact: [
+    "req.headers.authorization",
+    "req.headers.cookie",
+    "res.headers['set-cookie']"
+  ],
+  ...isProduction ? {} : {
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true }
+    }
+  }
+});
+
+// src/routes/keys.ts
 var router3 = (0, import_express3.Router)();
 var ADMIN_KEYS = /* @__PURE__ */ new Set(["IPASTORE-ADMIN", "ADMIN-LIFETIME-KEY"]);
 var ADMIN_PANEL_KEY = "ADMIN-KEYGEN";
@@ -49273,6 +49294,82 @@ var POSSIBLE_KEYS_PATHS = [
   path4.resolve(process.cwd(), "artifacts", "api-server", "keys.json"),
   path4.resolve(fileURLToPath2(import.meta.url), "..", "..", "keys.json")
 ];
+var GH_TOKEN = process.env.GITHUB_TOKEN;
+var GH_KEYS_REPO = process.env.GITHUB_KEYS_REPO;
+var GH_KEYS_BRANCH = process.env.GITHUB_KEYS_BRANCH || "main";
+var GH_KEYS_PATH = process.env.GITHUB_KEYS_PATH || "keys.json";
+var ghKeysSha = null;
+async function loadKeysFromGitHub() {
+  if (!GH_TOKEN || !GH_KEYS_REPO) return null;
+  try {
+    const url = `https://api.github.com/repos/${GH_KEYS_REPO}/contents/${GH_KEYS_PATH}?ref=${GH_KEYS_BRANCH}`;
+    const resp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${GH_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "IPAStore-Server"
+      }
+    });
+    if (!resp.ok) {
+      logger.warn({ status: resp.status }, "GitHub keys fetch failed");
+      return null;
+    }
+    const data = await resp.json();
+    ghKeysSha = data.sha;
+    const content = Buffer.from(data.content, "base64").toString("utf-8");
+    logger.info({ repo: GH_KEYS_REPO }, "Loaded keys from GitHub");
+    return JSON.parse(content);
+  } catch (err) {
+    logger.warn({ err }, "Could not load keys from GitHub");
+    return null;
+  }
+}
+async function saveKeysToGitHub(keys) {
+  if (!GH_TOKEN || !GH_KEYS_REPO) return;
+  try {
+    const content = Buffer.from(JSON.stringify(keys, null, 2)).toString("base64");
+    const body = {
+      message: "chore: update keys.json",
+      content,
+      branch: GH_KEYS_BRANCH
+    };
+    if (ghKeysSha) body.sha = ghKeysSha;
+    const url = `https://api.github.com/repos/${GH_KEYS_REPO}/contents/${GH_KEYS_PATH}`;
+    const resp = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${GH_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "IPAStore-Server"
+      },
+      body: JSON.stringify(body)
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      ghKeysSha = data.content.sha;
+      logger.info({ repo: GH_KEYS_REPO }, "Keys synced to GitHub");
+    } else {
+      logger.warn({ status: resp.status }, "GitHub keys save failed");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Could not save keys to GitHub");
+  }
+}
+async function initKeysFromGitHub() {
+  if (!GH_TOKEN || !GH_KEYS_REPO) return;
+  const ghKeys = await loadKeysFromGitHub();
+  if (ghKeys !== null) {
+    const filePath = getKeysFilePath();
+    if (filePath) {
+      try {
+        fs4.writeFileSync(filePath, JSON.stringify(ghKeys, null, 2));
+        logger.info("Keys written to local file from GitHub");
+      } catch {
+      }
+    }
+  }
+}
 function getKeysFilePath() {
   for (const p2 of POSSIBLE_KEYS_PATHS) {
     if (fs4.existsSync(p2)) return p2;
@@ -49297,6 +49394,8 @@ function saveKeys(keys) {
     fs4.writeFileSync(filePath, JSON.stringify(keys, null, 2));
   } catch {
   }
+  saveKeysToGitHub(keys).catch(() => {
+  });
 }
 function isAdminRequest(req) {
   const header = req.headers["x-admin-key"];
@@ -49453,24 +49552,6 @@ function v4(options, buf, offset) {
   return _v4(options, buf, offset);
 }
 var v4_default = v4;
-
-// src/lib/logger.ts
-var import_pino = __toESM(require_pino(), 1);
-var isProduction = process.env.NODE_ENV === "production";
-var logger = (0, import_pino.default)({
-  level: process.env.LOG_LEVEL ?? "info",
-  redact: [
-    "req.headers.authorization",
-    "req.headers.cookie",
-    "res.headers['set-cookie']"
-  ],
-  ...isProduction ? {} : {
-    transport: {
-      target: "pino-pretty",
-      options: { colorize: true }
-    }
-  }
-});
 
 // src/routes/sign.ts
 var execFileAsync = promisify(execFile2);
@@ -49783,6 +49864,13 @@ if (publicExists) {
   app.get("/", (_req, res) => {
     res.json({ status: "IPA Store API running", docs: "/api/healthz" });
   });
+}
+if (process.env.GITHUB_TOKEN && process.env.GITHUB_KEYS_REPO) {
+  logger.info("GitHub keys repo configured \u2014 loading keys on startup");
+  initKeysFromGitHub().catch(() => {
+  });
+} else {
+  logger.info("No GitHub keys repo configured \u2014 using local keys.json");
 }
 if (process.env.GITHUB_TOKEN && process.env.GITHUB_CERT_REPO) {
   logger.info("GitHub cert repo configured \u2014 triggering background sign on startup");
