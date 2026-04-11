@@ -314,9 +314,9 @@
   },
   {
     "key": "375B04710F710D37",
-    "used": false,
-    "usedAt": null,
-    "usedBy": null
+    "used": true,
+    "usedAt": "2026-04-11T09:28:42.759Z",
+    "usedBy": "152.59.2.81, 172.71.82.28, 10.28.124.3"
   },
   {
     "key": "FA7FA0E7AC7D0A38",
