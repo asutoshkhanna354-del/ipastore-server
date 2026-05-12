@@ -86,9 +86,9 @@
   },
   {
     "key": "05B1956ED0B4B02E",
-    "used": false,
-    "usedAt": null,
-    "usedBy": null
+    "used": true,
+    "usedAt": "2026-05-12T08:14:15.384Z",
+    "usedBy": "106.192.59.9, 172.69.87.86, 10.27.206.131"
   },
   {
     "key": "135B14B7E0675B6D",
